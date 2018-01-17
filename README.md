@@ -1,0 +1,1 @@
+# snyk-intellij-plugin
