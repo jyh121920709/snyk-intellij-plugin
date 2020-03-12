@@ -1,6 +1,6 @@
 package io.snyk.plugin.embeddedserver
 
-import java.io.IOException
+import java.io.{File, IOException}
 import java.net.{URI, URL, URLEncoder}
 
 import fi.iki.elonen.NanoHTTPD
@@ -155,14 +155,30 @@ class MiniServer(
       case Success(template) =>
         def latestScanResult = safeScanResult
 
+        val selectedProjectId = pluginState.selectedProjectId.get
+        val snykVulnResponseSeq = latestScanResult
+
+        // It's main module if displayTargetFile contains only 'pom.xml'. Sub modules contains sub folders 'folder/pom.xml'.
+        val isMainModule = latestScanResult.count(snykVulnResponse =>
+          selectedProjectId.contains(snykVulnResponse.projectName.get)
+            && snykVulnResponse.displayTargetFile.get.split(File.separator).length == 1) == 1
+
+        // Check is main module. If main module it will use all vulnerabilities.
+        // If not main module it will filter vulnerabilities by sub project.
+        val filteredByProjectVulnerabilities = if (isMainModule) {
+          snykVulnResponseSeq
+        } else {
+          latestScanResult.filter(snykVulnResponse => selectedProjectId.contains(snykVulnResponse.projectName.get))
+        }
+
         val ctx = Map.newBuilder[String, Any]
 
         ctx ++= params.contextMap
         ctx ++= colorProvider.toMap.mapValues (_.hexRepr)
-        ctx += "currentProject" -> pluginState.selectedProjectId.get
+        ctx += "currentProject" -> selectedProjectId
         ctx += "projectIds" -> pluginState.rootProjectIds
-        ctx += "miniVulns" -> latestScanResult.flatMap(vulnResponse => vulnResponse.mergedMiniVulns).sortBy (_.spec)
-        ctx += "vulnerabilities" -> latestScanResult.flatMap(vulnResponse => vulnResponse.vulnerabilities)
+        ctx += "miniVulns" -> filteredByProjectVulnerabilities.flatMap(vulnResponse => vulnResponse.mergedMiniVulns).sortBy (_.spec)
+        ctx += "vulnerabilities" -> filteredByProjectVulnerabilities.flatMap(vulnResponse => vulnResponse.vulnerabilities)
 
         //TODO: should these just be added to state?
         val paramFlags = params.all ("flags").map (_.toLowerCase -> true).toMap
